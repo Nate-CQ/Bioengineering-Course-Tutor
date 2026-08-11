@@ -96,14 +96,3 @@ Run locally:
 
 ```bash
 streamlit run app.py
-```
-
-## Resume Bullet
-
-Built a practice question generator and tutor for four bioengineering
-courses (Signals and Systems, Physiology, Biomaterials, Biostatistics),
-engineering a from-scratch Elo rating system with a calibrated ramp-up
-phase to track topic mastery and adapt question difficulty; integrated the
-Claude API to generate course-specific questions, grade short-answer
-responses against rubrics with partial credit, and explain problem set
-questions step by step; deployed as a Streamlit application.

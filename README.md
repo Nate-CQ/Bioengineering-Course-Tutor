@@ -1,98 +1,52 @@
 # Course Tutor
 
-A practice question generator, answer checker, and step-by-step explainer for
-four bioengineering courses: Bioengineering Signals and Systems,
-Principles of Human Physiology, Biomaterials, and Biological Data Science I
-(Fundamentals of Biostatistics).
+A practice question generator, answer checker, and step-by-step explainer for four bioengineering courses: Bioengineering Signals and Systems, Principles of Human Physiology, Biomaterials, and Biological Data Science I (Fundamentals of Biostatistics).
 
-## What It Does
+## Features
 
-Pick a course and a topic (or let the tool pick the topic you're weakest on),
-and it writes a fresh multiple-choice, fill-in-the-blank, or short-answer
-question at a difficulty matched to your current skill level. Multiple choice
-and fill-in-the-blank are graded instantly; short answers are graded by
-Claude against a rubric, since free-text responses can't be checked with
-exact string matching. A separate explainer tab takes any pasted problem set
-question and walks through it step by step, without affecting your ratings.
+- Multiple choice, fill-in-the-blank, short answer, and long-form problem questions, generated fresh each time and matched to your current skill level
+- Automatic difficulty adjustment based on your performance, with a calibration phase for new topics
+- Progress saved across sessions under a username, no password required
+- Short answers and long-form problems graded against a rubric, with partial credit
+- Built-in explainer: paste any concept or problem set question for a step-by-step walkthrough
 
-## How It Was Built
+## Requirements
 
-### Login and Persistence
-
-A lightweight username-based login (no password) keeps each person's
-progress separate. Ratings, question counts, and history are stored in a
-local SQLite database (`db.py`), keyed by username, course, and topic, and
-are saved immediately after every graded answer, then reloaded on login.
-This means refreshing the browser or closing and reopening the app no
-longer resets your progress back to zero.
-
-### Mastery Tracking Engine
-
-The core non-LLM component is a from-scratch Elo rating system
-(`mastery_engine.py`), the same math used for chess ratings, applied to
-topic mastery instead of players. Each subtopic starts at a rating of 1200.
-Question difficulty tiers (easy, medium, hard, expert) are anchored to fixed
-reference ratings 200 points apart. After each answer, the student's rating
-moves toward or away from the question's difficulty rating based on whether
-they got it right, using the standard Elo expected-score formula.
-
-The first 10 questions on a topic run with a high K-factor (48) so the
-rating converges quickly to the student's true level. After calibration,
-the K-factor drops to 20 so a single lucky or unlucky answer doesn't swing
-the rating too far. The engine also recommends the next question's
-difficulty by picking the tier closest to the student's current rating,
-keeping questions near the edge of their ability.
-
-### Partial Credit for Short Answer
-
-Multiple choice and fill-in-the-blank are graded by exact match against the
-accepted answer(s). Short answers can't be graded that way, so those are
-sent to Claude along with a rubric generated at question-writing time.
-Claude returns a score of 1.0, 0.5, or 0.0 plus specific feedback, and that
-score feeds into the same Elo update as any other question type.
-
-### Question Taxonomy
-
-Each course is broken into 9-12 granular subtopics (`course_data.py`),
-researched from published university syllabi and standard textbook tables
-of contents for each subject: Semmlow's *Circuits, Signals, and Systems for
-Bioengineers* for signal processing, Ratner et al.'s *Biomaterials Science*
-for biomaterials, and standard undergraduate human physiology and
-biostatistics course structures. Granular topics keep generated questions
-targeted at one specific concept (for example, "sampling and the sampling
-theorem" rather than a broad catch-all like "signals"), which is what both
-the mastery engine and the question generator use to stay on-syllabus.
-
-### LLM Layer
-
-The Claude API (`claude-sonnet-5`) is called for three things: writing
-questions matched to a course, topic, and difficulty; grading short answers
-against a rubric; and explaining pasted problem set questions step by step.
-
-## Technical Stack
-
-| Layer | Technology | Purpose |
-|---|---|---|
-| Mastery engine | Python | Elo rating system with calibration and partial credit |
-| Persistence | SQLite | Per-user, per-topic rating storage across sessions |
-| LLM layer | Anthropic Python SDK | Question generation, rubric grading, explanations |
-| Web app | Streamlit | Course/topic selection, question flow, rating dashboard |
-| Deployment | Streamlit Community Cloud | Free hosting with GitHub integration |
+- Python 3.9 or later
+- An Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
 
 ## Setup
 
+Clone the repository and install dependencies:
+
 ```bash
+git clone <your-repo-url>
+cd <repo-folder>
 pip install -r requirements.txt
 ```
 
-Set your Anthropic API key as an environment variable, or in
-`.streamlit/secrets.toml` for Streamlit Cloud deployment:
+Create a `.streamlit/secrets.toml` file in the project folder with your API key:
 
 ```toml
 ANTHROPIC_API_KEY = "your-key-here"
 ```
 
-Run locally:
+Run the app:
 
 ```bash
 streamlit run app.py
+```
+
+## Usage
+
+Enter a username on the login screen (any name works, it's just used to keep your progress separate, no account or password needed).
+
+Pick a course from the sidebar. You can either choose a specific topic or let the app automatically pick whichever topic you're currently weakest on.
+
+Choose a question type, or leave it on "Mixed" for a random mix each time. Generate a question, answer it, and submit for instant grading and an explanation.
+
+Your rating and progress are saved automatically after every question and will still be there the next time you log in with the same username.
+
+## Deployment
+
+To deploy on Streamlit Community Cloud: push this repository to GitHub, go to [share.streamlit.io](https://share.streamlit.io), create a new app pointing at this repo with `app.py` as the entry point, and add your `ANTHROPIC_API_KEY` under Advanced Settings > Secrets before deploying.

@@ -15,6 +15,8 @@ Architecture:
 
 import streamlit as st
 
+import db
+from answer_matching import answers_match
 from claude_client import generate_question, grade_short_answer, explain_concept
 from course_data import COURSES, QUESTION_TYPES
 from mastery_engine import MasteryEngine
@@ -23,16 +25,40 @@ st.set_page_config(page_title="Course Tutor", page_icon="🧬", layout="wide")
 
 
 # ---------------------------------------------------------------------------
-# Session state
+# Login: a plain username, no password. Keeps each person's progress
+# separate and reloads their saved ratings from the database.
+# ---------------------------------------------------------------------------
+if "username" not in st.session_state:
+    st.title("🧬 Course Tutor")
+    st.write("Enter a username to load your saved progress, or start fresh with a new one.")
+    known = db.known_usernames()
+    if known:
+        st.caption("Existing users: " + ", ".join(known))
+    name_input = st.text_input("Username")
+    if st.button("Continue", type="primary") and name_input.strip():
+        st.session_state.username = name_input.strip()
+        st.rerun()
+    st.stop()
+
+username = st.session_state.username
+
+# ---------------------------------------------------------------------------
+# Session state: one MasteryEngine per course, loaded from the database
+# once per login rather than reset on every refresh.
 # ---------------------------------------------------------------------------
 if "engines" not in st.session_state:
-    st.session_state.engines = {
-        key: MasteryEngine(course["topics"]) for key, course in COURSES.items()
-    }
+    engines = {}
+    for key, course_info in COURSES.items():
+        engine = MasteryEngine(course_info["topics"])
+        engine.load(db.load_ratings(username, key))
+        engines[key] = engine
+    st.session_state.engines = engines
 if "current_question" not in st.session_state:
     st.session_state.current_question = None
 if "graded" not in st.session_state:
     st.session_state.graded = None
+if "recent_contexts" not in st.session_state:
+    st.session_state.recent_contexts = {}  # {course_key: [last few contexts used]}
 
 
 def reset_question():
@@ -40,10 +66,28 @@ def reset_question():
     st.session_state.graded = None
 
 
+def persist(course_key: str, topic: str, state) -> None:
+    """Save one topic's updated state to the database immediately after
+    an Elo update, so a refresh never loses progress."""
+    db.save_rating(
+        username, course_key, topic,
+        rating=state.rating,
+        questions_answered=state.questions_answered,
+        history=[list(h) for h in state.history],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sidebar: course + topic + question type selection
 # ---------------------------------------------------------------------------
 st.sidebar.title("🧬 Course Tutor")
+st.sidebar.caption(f"Logged in as **{username}**")
+if st.sidebar.button("Switch user"):
+    del st.session_state["username"]
+    del st.session_state["engines"]
+    reset_question()
+    st.rerun()
+
 course_key = st.sidebar.selectbox(
     "Course",
     options=list(COURSES.keys()),
@@ -61,16 +105,26 @@ topic_mode = st.sidebar.radio(
 if topic_mode == "Choose a topic":
     topic = st.sidebar.selectbox("Topic", course["topics"], on_change=reset_question)
 else:
-    # weakest topic = lowest rating, prioritizing topics still in calibration
-    topic = min(
-        course["topics"],
-        key=lambda t: (not engine.get_state(t).calibrating, engine.get_state(t).rating),
-    )
+    # While a question is active (including right after grading, before
+    # "Next question" is clicked), stay locked on that question's topic so
+    # the rating shown matches the question you just answered. Only
+    # recompute the weakest topic once you move on to a new question.
+    if st.session_state.current_question is not None:
+        topic = st.session_state.current_question["topic"]
+    else:
+        topic = min(
+            course["topics"],
+            key=lambda t: (not engine.get_state(t).calibrating, engine.get_state(t).rating),
+        )
     st.sidebar.write(f"Next up: **{topic}**")
+
+available_types = list(QUESTION_TYPES.values())
+if not course["quantitative"]:
+    available_types = [t for t in available_types if t != "Long-Form Problem"]
 
 question_type_choice = st.sidebar.radio(
     "Question type",
-    ["Mixed"] + list(QUESTION_TYPES.values()),
+    ["Mixed"] + available_types,
     on_change=reset_question,
 )
 
@@ -110,12 +164,35 @@ if st.session_state.current_question is None:
         difficulty = engine.recommend_difficulty(topic)
         if question_type_choice == "Mixed":
             import random
-            q_type = random.choice(list(QUESTION_TYPES.keys()))
+            possible_types = list(QUESTION_TYPES.keys())
+            if not course["quantitative"]:
+                possible_types.remove("problem")
+            q_type = random.choice(possible_types)
         else:
             q_type = [k for k, v in QUESTION_TYPES.items() if v == question_type_choice][0]
 
+        # Pick a context that hasn't been used in the last 3 questions for
+        # this course, so generated questions don't all lean on the same
+        # go-to example.
+        context_hint = None
+        contexts = course.get("example_contexts")
+        if contexts:
+            import random
+            recent = st.session_state.recent_contexts.get(course_key, [])
+            available = [c for c in contexts if c not in recent] or contexts
+            context_hint = random.choice(available)
+            recent = (recent + [context_hint])[-3:]
+            st.session_state.recent_contexts[course_key] = recent
+
         with st.spinner("Writing your question..."):
-            q = generate_question(course["name"], course["description"], topic, difficulty, q_type)
+            try:
+                recent_questions = db.get_recent_questions(username, course_key, topic, limit=10)
+                q = generate_question(course["name"], course["description"], topic, difficulty,
+                                       q_type, context_hint, recent_questions)
+            except RuntimeError as e:
+                st.error(f"Couldn't generate a question: {e}")
+                st.stop()
+        db.save_question(username, course_key, topic, q["question"])
         st.session_state.current_question = q
         st.session_state.graded = None
         st.rerun()
@@ -139,14 +216,14 @@ if q is not None and st.session_state.graded is None:
                 "student_answer": choice,
             }
             engine.update(topic, q["difficulty"], score)
+            persist(course_key, topic, engine.get_state(topic))
             st.rerun()
 
     elif q["type"] == "fill_in_blank":
         answer = st.text_input("Your answer")
         if st.button("Submit answer") and answer.strip():
             accepted = [q["correct_answer"]] + q.get("accepted_answers", [])
-            normalized = [a.strip().lower() for a in accepted]
-            score = 1.0 if answer.strip().lower() in normalized else 0.0
+            score = 1.0 if answers_match(answer, accepted) else 0.0
             st.session_state.graded = {
                 "score": score,
                 "feedback": q["explanation"],
@@ -154,13 +231,24 @@ if q is not None and st.session_state.graded is None:
                 "student_answer": answer,
             }
             engine.update(topic, q["difficulty"], score)
+            persist(course_key, topic, engine.get_state(topic))
             st.rerun()
 
-    elif q["type"] == "short_answer":
-        answer = st.text_area("Your answer", height=150)
+    elif q["type"] in ("short_answer", "problem"):
+        placeholder = (
+            "Show your full work, including any equations or steps."
+            if q["type"] == "problem"
+            else None
+        )
+        answer = st.text_area("Your answer", height=250 if q["type"] == "problem" else 150,
+                               placeholder=placeholder)
         if st.button("Submit answer") and answer.strip():
             with st.spinner("Grading against the rubric..."):
-                result = grade_short_answer(q["question"], q["rubric"], answer)
+                try:
+                    result = grade_short_answer(q["question"], q["rubric"], answer)
+                except RuntimeError as e:
+                    st.error(f"Couldn't grade that answer: {e}")
+                    st.stop()
             st.session_state.graded = {
                 "score": result["score"],
                 "feedback": result["feedback"],
@@ -168,6 +256,7 @@ if q is not None and st.session_state.graded is None:
                 "student_answer": answer,
             }
             engine.update(topic, q["difficulty"], result["score"])
+            persist(course_key, topic, engine.get_state(topic))
             st.rerun()
 
 # ---------------------------------------------------------------------------

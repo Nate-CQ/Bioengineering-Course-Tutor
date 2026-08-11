@@ -70,6 +70,16 @@ class MasteryEngine:
             self.topics[topic] = TopicState()
         return self.topics[topic]
 
+    def load(self, saved: Dict[str, dict]) -> None:
+        """Populate topic states from previously saved data, e.g. rows
+        loaded from the database on login. Safe to call with a partial
+        dict; any topic not present just keeps its default state."""
+        for topic, data in saved.items():
+            state = self.get_state(topic)
+            state.rating = data["rating"]
+            state.questions_answered = data["questions_answered"]
+            state.history = [tuple(h) for h in data["history"]]
+
     def recommend_difficulty(self, topic: str) -> str:
         """Pick the difficulty tier whose reference rating is closest to the
         student's current rating on this topic, so new questions land near

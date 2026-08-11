@@ -17,6 +17,15 @@ question and walks through it step by step, without affecting your ratings.
 
 ## How It Was Built
 
+### Login and Persistence
+
+A lightweight username-based login (no password) keeps each person's
+progress separate. Ratings, question counts, and history are stored in a
+local SQLite database (`db.py`), keyed by username, course, and topic, and
+are saved immediately after every graded answer, then reloaded on login.
+This means refreshing the browser or closing and reopening the app no
+longer resets your progress back to zero.
+
 ### Mastery Tracking Engine
 
 The core non-LLM component is a from-scratch Elo rating system
@@ -65,6 +74,7 @@ against a rubric; and explaining pasted problem set questions step by step.
 | Layer | Technology | Purpose |
 |---|---|---|
 | Mastery engine | Python | Elo rating system with calibration and partial credit |
+| Persistence | SQLite | Per-user, per-topic rating storage across sessions |
 | LLM layer | Anthropic Python SDK | Question generation, rubric grading, explanations |
 | Web app | Streamlit | Course/topic selection, question flow, rating dashboard |
 | Deployment | Streamlit Community Cloud | Free hosting with GitHub integration |

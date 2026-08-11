@@ -2,6 +2,9 @@
 .streamlit/secrets.toml
 .env
 
+# Local ratings database (per-user progress data, not code)
+course_tutor.db
+
 # Python
 __pycache__/
 *.pyc

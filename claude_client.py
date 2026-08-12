@@ -27,9 +27,11 @@ MODEL = "claude-sonnet-5"
 
 
 def _get_api_key():
-    """Read the API key from Streamlit secrets when running as a Streamlit
-    app, falling back to a plain environment variable otherwise (useful for
-    standalone scripts or non-Streamlit deployments)."""
+    """Fallback key resolution for standalone scripts or local personal
+    use (reads Streamlit secrets, then a plain environment variable).
+    In the app itself, each user supplies their own key at login instead,
+    so their usage is billed to their own Anthropic account rather than
+    the app owner's."""
     try:
         import streamlit as st
         if "ANTHROPIC_API_KEY" in st.secrets:
@@ -39,7 +41,8 @@ def _get_api_key():
     return os.environ.get("ANTHROPIC_API_KEY")
 
 
-client = anthropic.Anthropic(api_key=_get_api_key())
+def _get_client(api_key: str = None) -> anthropic.Anthropic:
+    return anthropic.Anthropic(api_key=api_key or _get_api_key())
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +157,12 @@ _GRADE_TOOL = {
 }
 
 
-def _call_with_tool(system: str, user_message: str, tool: dict, max_tokens: int) -> dict:
+def _call_with_tool(system: str, user_message: str, tool: dict, max_tokens: int,
+                     api_key: str = None) -> dict:
     """Call the API forcing use of the given tool, and return its parsed
     input dict directly. The API validates the tool call against the
     schema server-side, so there is no freeform text to parse here."""
+    client = _get_client(api_key)
     response = client.messages.create(
         model=MODEL,
         max_tokens=max_tokens,
@@ -174,7 +179,7 @@ def _call_with_tool(system: str, user_message: str, tool: dict, max_tokens: int)
 
 def generate_question(course_name: str, course_description: str, topic: str,
                        difficulty: str, question_type: str, context_hint: str = None,
-                       recent_questions: list = None) -> dict:
+                       recent_questions: list = None, api_key: str = None) -> dict:
     """Generate one question for a given course, topic, difficulty, and
     question type. Returns a dict shaped for the requested type.
 
@@ -185,7 +190,10 @@ def generate_question(course_name: str, course_description: str, topic: str,
 
     recent_questions, if provided, is a list of question texts already
     asked on this topic, which Claude is instructed not to repeat or
-    trivially reword."""
+    trivially reword.
+
+    api_key, if provided, is used for this call instead of the app
+    owner's key, so usage bills to the calling user's own account."""
 
     system = (
         f"You write exam-quality practice questions for the undergraduate "
@@ -221,7 +229,7 @@ def generate_question(course_name: str, course_description: str, topic: str,
     for attempt in range(3):
         token_budget = max_tokens_by_type[question_type] + (attempt * 800)
         try:
-            data = _call_with_tool(system, "Generate the question now.", tool, token_budget)
+            data = _call_with_tool(system, "Generate the question now.", tool, token_budget, api_key)
             data["type"] = question_type
             data["topic"] = topic
             data["difficulty"] = difficulty
@@ -237,7 +245,7 @@ def generate_question(course_name: str, course_description: str, topic: str,
     )
 
 
-def explain_concept(course_name: str, prompt_text: str) -> str:
+def explain_concept(course_name: str, prompt_text: str, api_key: str = None) -> str:
     """Explain a pasted concept or problem set question step by step. Used
     by the standalone explainer, which does not touch the mastery engine."""
     system = (
@@ -248,6 +256,7 @@ def explain_concept(course_name: str, prompt_text: str) -> str:
         f"could follow and reuse on similar problems. Do not just state the "
         f"final answer without the reasoning."
     )
+    client = _get_client(api_key)
     response = client.messages.create(
         model=MODEL,
         max_tokens=1200,
@@ -257,7 +266,7 @@ def explain_concept(course_name: str, prompt_text: str) -> str:
     return "".join(block.text for block in response.content if block.type == "text")
 
 
-def grade_short_answer(question: str, rubric: str, student_answer: str) -> dict:
+def grade_short_answer(question: str, rubric: str, student_answer: str, api_key: str = None) -> dict:
     """Grade a short-answer or long-form-problem response against a rubric.
 
     Returns {"score": 1.0 | 0.5 | 0.0, "feedback": str}
@@ -274,7 +283,7 @@ def grade_short_answer(question: str, rubric: str, student_answer: str) -> dict:
     last_error = None
     for attempt in range(2):
         try:
-            return _call_with_tool(system, user, _GRADE_TOOL, 500)
+            return _call_with_tool(system, user, _GRADE_TOOL, 500, api_key)
         except Exception as e:
             last_error = e
             time.sleep(1)

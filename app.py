@@ -25,22 +25,51 @@ st.set_page_config(page_title="Course Tutor", page_icon="🧬", layout="wide")
 
 
 # ---------------------------------------------------------------------------
-# Login: a plain username, no password. Keeps each person's progress
-# separate and reloads their saved ratings from the database.
+# Login: username + password (accounts are created automatically on first
+# login with a new username), plus a required personal Anthropic API key.
+# Each user's own key is used for their questions, so usage bills to their
+# own Anthropic account rather than the app owner's.
 # ---------------------------------------------------------------------------
 if "username" not in st.session_state:
     st.title("🧬 Course Tutor")
-    st.write("Enter a username to load your saved progress, or start fresh with a new one.")
+    st.write(
+        "Log in with a username and password. A new username automatically "
+        "creates an account the first time you use it."
+    )
     known = db.known_usernames()
     if known:
         st.caption("Existing users: " + ", ".join(known))
+
     name_input = st.text_input("Username")
-    if st.button("Continue", type="primary") and name_input.strip():
-        st.session_state.username = name_input.strip()
-        st.rerun()
+    password_input = st.text_input("Password", type="password")
+    api_key_input = st.text_input(
+        "Your Anthropic API key",
+        type="password",
+        help="Get one at console.anthropic.com. Questions are generated using "
+             "your own key, so usage is billed to your account, not shared. "
+             "Your key is used only for this session and is never saved.",
+    )
+
+    if st.button("Continue", type="primary"):
+        name = name_input.strip()
+        if not name or not password_input or not api_key_input.strip():
+            st.error("Username, password, and API key are all required.")
+        elif db.user_exists(name):
+            if db.verify_password(name, password_input):
+                st.session_state.username = name
+                st.session_state.api_key = api_key_input.strip()
+                st.rerun()
+            else:
+                st.error("Incorrect password for that username.")
+        else:
+            db.create_user(name, password_input)
+            st.session_state.username = name
+            st.session_state.api_key = api_key_input.strip()
+            st.rerun()
     st.stop()
 
 username = st.session_state.username
+api_key = st.session_state.api_key
 
 # ---------------------------------------------------------------------------
 # Session state: one MasteryEngine per course, loaded from the database
@@ -84,6 +113,7 @@ st.sidebar.title("🧬 Course Tutor")
 st.sidebar.caption(f"Logged in as **{username}**")
 if st.sidebar.button("Switch user"):
     del st.session_state["username"]
+    del st.session_state["api_key"]
     del st.session_state["engines"]
     reset_question()
     st.rerun()
@@ -188,7 +218,7 @@ if st.session_state.current_question is None:
             try:
                 recent_questions = db.get_recent_questions(username, course_key, topic, limit=10)
                 q = generate_question(course["name"], course["description"], topic, difficulty,
-                                       q_type, context_hint, recent_questions)
+                                       q_type, context_hint, recent_questions, api_key)
             except RuntimeError as e:
                 st.error(f"Couldn't generate a question: {e}")
                 st.stop()
@@ -245,7 +275,7 @@ if q is not None and st.session_state.graded is None:
         if st.button("Submit answer") and answer.strip():
             with st.spinner("Grading against the rubric..."):
                 try:
-                    result = grade_short_answer(q["question"], q["rubric"], answer)
+                    result = grade_short_answer(q["question"], q["rubric"], answer, api_key)
                 except RuntimeError as e:
                     st.error(f"Couldn't grade that answer: {e}")
                     st.stop()
@@ -299,5 +329,5 @@ with st.expander("Explain a concept or problem set question"):
     if st.button("Explain"):
         if free_question.strip():
             with st.spinner("Working through it..."):
-                explanation = explain_concept(course["name"], free_question)
+                explanation = explain_concept(course["name"], free_question, api_key)
             st.write(explanation)

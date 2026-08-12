@@ -1,12 +1,15 @@
 """
-Persistence layer for mastery ratings, so progress survives across
-sessions and browser refreshes instead of resetting every time the app
-reloads.
+Persistence layer for mastery ratings and user accounts, so progress
+survives across sessions and browser refreshes, and each person's data
+stays genuinely separate.
 
-Uses SQLite with one row per (username, course, topic). No passwords,
-just a username as a simple identifier, since this is a study tool for
-a small group, not a security-sensitive product. That keeps each
-person's progress separate without the overhead of real authentication.
+Uses SQLite. Passwords are never stored in plain text, only a salted
+PBKDF2 hash, using Python's built-in hashlib so no extra dependency is
+needed. This is intentionally lightweight (no email verification, no
+password reset flow) since it's a study tool for a small group, not a
+security-sensitive product, but it does mean two different people can't
+collide on the same username the way an unauthenticated system would
+allow.
 
 Deployment note: this file-based database persists reliably for local
 use and for normal day-to-day use of a deployed Streamlit app. It is
@@ -18,15 +21,27 @@ example Supabase or a managed Postgres instance) using the same
 function signatures below.
 """
 
+import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing
 
 DB_PATH = "course_tutor.db"
+_PBKDF2_ITERATIONS = 100_000
 
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            salt TEXT NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS ratings (
@@ -52,6 +67,42 @@ def _connect() -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def _hash_password(password: str, salt: bytes) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS).hex()
+
+
+def user_exists(username: str) -> bool:
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
+    return row is not None
+
+
+def create_user(username: str, password: str) -> None:
+    """Create a new account. Caller must check user_exists() first."""
+    salt = os.urandom(16)
+    password_hash = _hash_password(password, salt)
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT INTO users (username, salt, password_hash) VALUES (?, ?, ?)",
+            (username, salt.hex(), password_hash),
+        )
+        conn.commit()
+
+
+def verify_password(username: str, password: str) -> bool:
+    """True if the password matches the stored hash for this username.
+    False (not an error) if the username doesn't exist or the password
+    is wrong, so callers don't need to distinguish the two cases."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT salt, password_hash FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    if row is None:
+        return False
+    salt_hex, stored_hash = row
+    return _hash_password(password, bytes.fromhex(salt_hex)) == stored_hash
 
 
 def load_ratings(username: str, course: str) -> dict:
@@ -92,10 +143,10 @@ def save_rating(username: str, course: str, topic: str, rating: float,
 
 
 def known_usernames() -> list:
-    """All usernames that have at least one saved rating, used to show a
-    friendly 'welcome back' rather than silently starting fresh."""
+    """All registered usernames, used to show a friendly 'welcome back'
+    rather than silently starting fresh."""
     with closing(_connect()) as conn:
-        rows = conn.execute("SELECT DISTINCT username FROM ratings").fetchall()
+        rows = conn.execute("SELECT username FROM users ORDER BY username").fetchall()
     return [r[0] for r in rows]
 
 

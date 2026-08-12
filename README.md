@@ -6,8 +6,12 @@ A practice question generator, answer checker, and step-by-step explainer for fo
 
 - Multiple choice, fill-in-the-blank, short answer, and long-form problem questions, generated fresh each time and matched to your current skill level
 - Automatic difficulty adjustment based on your performance, with a calibration phase for new topics
+<<<<<<< HEAD
 - Questions stay varied: the app avoids repeating the same question or defaulting to the same go-to example every time
 - Password-protected accounts, so your progress is genuinely yours and can't be overwritten by someone else using the same name
+=======
+- Progress saved across sessions under a username, no password required
+>>>>>>> 0ec3714f93e0df1313327e958b3fb8eda2716abf
 - Short answers and long-form problems graded against a rubric, with partial credit
 - Built-in explainer: paste any concept or problem set question for a step-by-step walkthrough
 
@@ -26,12 +30,22 @@ cd <repo-folder>
 pip install -r requirements.txt
 ```
 
+<<<<<<< HEAD
+=======
+Create a `.streamlit/secrets.toml` file in the project folder with your API key:
+
+```toml
+ANTHROPIC_API_KEY = "your-key-here"
+```
+
+>>>>>>> 0ec3714f93e0df1313327e958b3fb8eda2716abf
 Run the app:
 
 ```bash
 streamlit run app.py
 ```
 
+<<<<<<< HEAD
 No API key needs to be configured ahead of time. Each person enters their own when they log in (see below).
 
 ## How Accounts Work
@@ -53,13 +67,26 @@ The practical tradeoff: you'll need to paste your key in again each time you log
 If you don't have a key yet, create one at [console.anthropic.com](https://console.anthropic.com) under API Keys.
 
 ## Usage
+=======
+## Usage
+
+Enter a username on the login screen (any name works, it's just used to keep your progress separate, no account or password needed).
+>>>>>>> 0ec3714f93e0df1313327e958b3fb8eda2716abf
 
 Pick a course from the sidebar. You can either choose a specific topic or let the app automatically pick whichever topic you're currently weakest on.
 
 Choose a question type, or leave it on "Mixed" for a random mix each time. Generate a question, answer it, and submit for instant grading and an explanation.
 
+<<<<<<< HEAD
 Your rating and progress are saved automatically after every question and will still be there the next time you log in with the same username and password.
 
 ## Deployment
 
 To deploy on Streamlit Community Cloud: push this repository to GitHub, go to [share.streamlit.io](https://share.streamlit.io), create a new app pointing at this repo with `app.py` as the entry point, and deploy. No secrets need to be configured on the deployment side, since each user supplies their own API key at login rather than the app relying on one shared key.
+=======
+Your rating and progress are saved automatically after every question and will still be there the next time you log in with the same username.
+
+## Deployment
+
+To deploy on Streamlit Community Cloud: push this repository to GitHub, go to [share.streamlit.io](https://share.streamlit.io), create a new app pointing at this repo with `app.py` as the entry point, and add your `ANTHROPIC_API_KEY` under Advanced Settings > Secrets before deploying.
+>>>>>>> 0ec3714f93e0df1313327e958b3fb8eda2716abf
